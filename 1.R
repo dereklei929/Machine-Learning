@@ -1,35 +1,21 @@
 library(dplyr)
 library(ggplot2)
-library(timeDate)
-library(KernSmooth)
-library(pastecs)
-library(DataCombine)
-library(tseries)
-library(descr)
-library(nortest)
-library(splines)
-library(stargazer)
-library(sandwich)
-library(lmtest)
-library(het.test)
 library(RCurl)
 library(rmarkdown)
 library(knitr)
 library(stats4)
 library(stats)
-library(mfx)
-library(glmnet)
 library(pander)
-# install.packages("NbClust")
 library(NbClust)
-# install.packages("randomForest")
 library(randomForest)
-# install.packages("ROCR")
 library(ROCR)
+library(glmnet)
 library(e1071)
 library(doParallel)
 library(data.table)
 library(tidyr)
+library(gridExtra)
+
 rm(list=ls())
 dr<-data.table(read.csv("default of credit card clients.csv",header=TRUE,sep = ",",skip=1)%>%rename(y=default.payment.next.month))
 set.seed(0706)
@@ -43,7 +29,7 @@ d[,SEX:=factor(SEX,levels=c("1","2"),labels=c("Male","Female"))]
 d[,EDUCATION:=as.factor(EDUCATION)]
 d[,MARRIAGE:=as.factor(MARRIAGE)]
 
-ggplot(d)
+
 ggplot(data.table(gather(d[,.(SEX,EDUCATION,MARRIAGE)],K,V)))+geom_bar(aes(x=V,fill=V))+facet_wrap(~K,scales="free")+
   xlab("")+ylab("Count")+scale_fill_brewer(palette = "Spectral",guide=FALSE)
 
@@ -133,62 +119,10 @@ d$PAY_AMT4_0<-ifelse(d$PAY_AMT4==0,1,0)
 d$PAY_AMT5_0<-ifelse(d$PAY_AMT5==0,1,0)
 d$PAY_AMT6_0<-ifelse(d$PAY_AMT6==0,1,0)
 
-
-
-
-#Log Reg Lasso
-
-N<-nrow(d)
-id<-sample(1:N,0.8*N)
-d_train<-d[id,]
-d_test<-d[-id,]
-y<-d_train$y
-
-#subset(d_train,select=colnames(d_train)[-24])
-
-
-x<-model.matrix(~0+.,subset(d_train,select=colnames(d_train)[-24]) )
-fit = glmnet(x, y, family = "binomial")
-plot(fit)
-#Cross validation lasso
-cvfit = cv.glmnet(x, y, family = "binomial", type.measure = "class")
-plot(cvfit)
-log(cvfit$lambda.min)
-
-coef(cvfit, s = "lambda.min")
-nx<-model.matrix(~0+.,subset(d_test,select=colnames(d_train)[-24]) )
-lphat<-predict(cvfit, newx = nx, s = "lambda.min")
-
-
-#Lasso ROC, AUC
-rocr_obj <- prediction(lphat, d_test$y)
-
-lpp<-performance(rocr_obj, "tpr", "fpr")
-ggplot(data.table(cbind(lpp@alpha.values[[1]],lpp@y.values[[1]],lpp@x.values[[1]]))[V1<5])+geom_line(aes(x=V3,y=V2,col=V1))+
-  scale_color_gradient2("Cutoff threshold",low="red",high="green",mid="yellow",midpoint = -1.5)+
-  xlab("False Positive Rate")+ylab("True Positive Rate")
-
-epp<-performance(rocr_obj, "err")
-ggplot(data.table(cbind(epp@x.values[[1]],epp@y.values[[1]]))[V1<5])+geom_line(aes(x=V1,y=V2))+
-  xlab("Cutoff thershold")+ylab("Error Rate")
-
-
-table(ifelse(lphat>0,1,0), d_test$y)
-# d_lphat <- data.frame(lphat, y = d_test$y)
-# ggplot(d_lphat) + geom_density(aes(x = lphat, color = as.factor(y)))
-#sampling-others
-d<-dr
-set.seed(0706)
-N<-nrow(d)
-id<-sample(1:N,0.8*N)
-d_train<-d[id,]
-d_test<-d[-id,]
-
-
-
 library(h2o)
-h2o.init()
+h2o.init(nthreads = 6)
 h2o.removeAll()
+
 
 df<-d
 df[,arr_delay:=as.factor(ifelse(arr_delay>15,1,0))]
@@ -206,44 +140,75 @@ dx_train <- as.h2o(d_train)  ## uploads data to H2O
 dx_valid<- as.h2o(d_valid)  ## uploads data to H2O
 dx_test <- as.h2o(d_test)
 
+#Elastic Net
 
+h2o.rm("GLM")
+GLM <- h2o.grid(
+  algorithm = "glm", 
+  grid_id = "GLM",
+  hyper_params = list(alpha = c(0,0.5,1)),
+  training_frame = dx_train,
+  validation_frame = dx_valid,
+  x=colnames(dx_train)[-24],
+  y="y",
+  seed=0706,
+  nfolds = 5,
+  family = "binomial"
+)
 
+GLMm<-h2o.getGrid(
+  grid_id = "GLM", 
+  sort_by = "AUC",
+  decreasing = TRUE
+)
 
+GLMb<- h2o.getModel(GLMm@model_ids[[1]])
+GLMp<-h2o.performance(GLMb)
+h2o.auc(GLMp)
+GLMrp<-cbind(h2o.fpr(GLMp),h2o.tpr(GLMp)$tpr)
+colnames(GLMrp)[3]<-"tpr"
+GLMt<-h2o.performance(GLMb,newdata = dx_test)
+GLMrt<-cbind(h2o.fpr(GLMt),h2o.tpr(GLMt)$tpr)
+h2o.auc(GLMt)
+colnames(GLMrt)[3]<-"tpr"
 
+GLMev<-ggplot(h2o.F1(GLMp))+geom_line(aes(x=threshold,y=f1,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F1 Metric")
+GLMet<-ggplot(h2o.F1(GLMt))+geom_line(aes(x=threshold,y=f1,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F1 Metric")
+GLMav<-ggplot(GLMrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)
+GLMat<-ggplot(GLMrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)
 
+grid.arrange(GLMev,GLMav,ncol=1)
+grid.arrange(GLMet,GLMat,ncol=1)
 
+ggplot(data.table(cbind(h2o.varimp(GLMb)$names[1:10],h2o.varimp(GLMb)$coefficients[1:10],h2o.varimp(GLMb)$sign[1:10]))[order(-V2)])+
+  geom_col(aes(x=V1,y=V2,fill=V3))+coord_flip()+scale_x_discrete(limits=rev(h2o.varimp(GLMb)$names[1:10]))+
+  theme(axis.text.x=element_blank(),axis.ticks=element_blank())+ylab("Magnitude")+xlab("Variable")+
+  scale_fill_discrete("Sign",labels=c("Negative","Positive"))
 
+#Random Forest
+h2o.rm("RF")
+?h2o.grid
+RF <- h2o.grid(
+  algorithm = "randomForest", 
+  grid_id = "RF",
+  hyper_params = list(alpha = c(0,0.5,1)),
+  training_frame = dx_train,
+  validation_frame = dx_valid,
+  x=colnames(dx_train)[-24],
+  y="y",
+  seed=0706,
+  nfolds = 5,
+  family = "binomial"
+)
 
-
-
-#RF
-rfmd <- randomForest(y ~ ., data = d_train, ntree = 300)
-plot(rfmd)
-rfphat <- predict(rfmd, d_test)
-
-
-
-
-
-
-#RF ROC, AUC
-rocr_obj <- prediction(rfphat, d_test$y)
-?performance
-plot(performance(rocr_obj, "err"))  
-plot(performance(rocr_obj, "tpr", "fpr"), colorize=TRUE)   
-plot(performance(rocr_obj, "tpr"))
-plot(performance(rocr_obj, "tpr", "fpr"), xlim = c(0,0.4), ylim = c(0.2,1), colorize=TRUE)        # ROC curve
-performance(rocr_obj, "auc")                 
-performance(rocr_obj, "auc")@y.values[[1]]  
-table(ifelse(rfphat>0.5,1,0), d_test$y)
-#NB
-fd_train<-d_train
-fd_test<-d_test
-fd_train$y<-as.factor(fd_train$y)
-fd_test$y<-as.factor(fd_test$y)
-nbmd <- naiveBayes(y~ ., data = fd_train)
-nbphat <- predict(nbmd, newdata = fd_test,type="raw")
-nbyhat <- predict(nbmd, newdata = fd_test)
-table(nbyhat, fd_test$y)
-#GBM
-gbmmd <- gbm(y ~ ., data = d_train, distribution = "bernoulli",n.trees = 100, interaction.depth = 10, shrinkage = 0.2)
+GLMm<-h2o.getGrid(
+  grid_id = "GLM", 
+  sort_by = "AUC",
+  decreasing = TRUE
+)
