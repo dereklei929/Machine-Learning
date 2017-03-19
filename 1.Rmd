@@ -1,0 +1,56 @@
+---
+title: "DS_Proj"
+author: "Kai Yip Lei (Derek)"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document: default
+---
+
+## 1. Setup, Loading libraries and Data  
+  
+I started the task by loading the libraries and data.  
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(RCurl)
+library(rmarkdown)
+library(knitr)
+library(stats4)
+library(stats)
+library(pander)
+library(NbClust)
+library(randomForest)
+library(ROCR)
+library(glmnet)
+library(e1071)
+library(doParallel)
+library(data.table)
+library(tidyr)
+library(gridExtra)
+
+rm(list=ls())
+dr<-data.table(read.csv("default of credit card clients.csv",header=TRUE,sep=",",skip=1)%>%rename(y=default.payment.next.month))
+set.seed(0706)
+
+opts_chunk$set(cache=TRUE)
+options(digit=4)
+```
+  
+The response variable **Default Payment Next Month** was renamed to **y** for convenience and the seed was set to **0706** here to ensure reproducibility.  
+  
+## 2. Exploratory data analysis & Feature Engineering  
+  
+### a. Data description  
+
+The variables in the dataset are defined as follows:  
+
+* __ID__ : ID of the individual consumer.  
+* __LIMIT_BAL__ : Amount of the given credit (NT dollar): it includes both the individual consumer credit and his/her family (supplementary) credit.  
+* __SEX__ : Gender (1 = male; 2 = female).  
+* __EDUCATION__ : Education (1 = graduate school; 2 = university; 3 = high school; 4 = others).  
+* __MARRIAGE__ : Marital status (1 = married; 2 = single; 3 = others).  
+* __AGE__ : Age (year).  
+* __PAY_0__ - __PAY_6__ : History of past payment. Past monthly payment records. __PAY_0__ = the repayment status in September, 2005; __PAY_2__ = the repayment status in August, 2005; . . .;__PAY_6__ = the repayment status in April, 2005. The measurement scale for the repayment status is: -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months; . . .; 8 = payment delay for eight months; 9 = payment delay for nine months and above.  
+* __BILL_AMT1__ - __BILL_AMT6__ : Amount of bill statement (NT dollar). __BILL_AMT1__ = amount of bill statement in September, 2005; __BILL_AMT2__ = amount of bill statement in August, 2005; . . .; __BILL_AMT6__ = amount of bill statement in April, 2005.
+* __PAY_AMT1__ - __PAY_AMT6__ : Amount of previous payment (NT dollar). __PAY_AMT1__ = amount paid in September, 2005; __PAY_AMT2__ = amount paid in August, 2005; . . .; __PAY_AMT6__ = amount paid in April, 2005.  
+
