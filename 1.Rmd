@@ -11,7 +11,7 @@ output:
 
 ## 1. Setup, Loading libraries and Data  
   
-I started the task by loading the libraries and data.  
+This task is about default payments in Taiwan and our goal is to predict the probability of default, I started the task by loading the libraries and data.  
 ```{r, echo=TRUE, message=FALSE, warning=FALSE}
 library(dplyr)
 library(ggplot2)
@@ -48,7 +48,7 @@ The response variable **Default Payment Next Month** was renamed to **y** for co
 
 The variables in the dataset are defined as follows:  
 
-* __default.payment.next.month.__ : default payment next month(Yes = 1, No = 0).  
+* __default.payment.next.month__ : default payment next month(Yes = 1, No = 0).  
 * __ID__ : ID of the individual consumer.  
 * __LIMIT_BAL__ : Amount of the given credit (NT dollar): it includes both the individual consumer credit and his/her family (supplementary) credit.  
 * __SEX__ : Gender (1 = male; 2 = female).  
@@ -91,7 +91,6 @@ We can see that individuals with higher education are less likely to have credit
   
 Since Payment status variables are not continuous, I converted them to factors as well. (For example, status -1 means that the individual paid duly, which is not comparable with the individual paid 1 month late.)  
 ```{r}
-
 d$PAY_0<-as.factor(d$PAY_0)
 d$PAY_2<-as.factor(d$PAY_2)
 d$PAY_3<-as.factor(d$PAY_3)
@@ -212,10 +211,17 @@ h2o.init(nthreads = 6)
 h2o.removeAll()
 ```
   
-Since my response variable is also a categorical value, I converted it to a factor and upload the whole dataset to H2O. Using the *h2o.splitFrame* function, I splitted the dataset into three parts in a ratio of 6:2:2, and named them train, valid and test respectively.  
+Since my response variable is also a categorical value, I converted it to a factor and upload the whole dataset to H2O. Using the *h2o.splitFrame* function, I splitted the dataset into three parts in a ratio of 6:2:2, and named them train, valid and test respectively. I also removed some strange values of the **EDUCATION** and the **MARRIAGE**.  
 ```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
 df<-d
 df[,y:=as.factor(y)]
+df[,PAY_0:=as.factor(PAY_0)]
+df[,PAY_2:=as.factor(PAY_2)]
+df[,PAY_3:=as.factor(PAY_3)]
+df[,PAY_4:=as.factor(PAY_4)]
+df[,PAY_5:=as.factor(PAY_5)]
+df[,PAY_6:=as.factor(PAY_6)]
+df<-df[EDUCATION%in%c(1,2,3,4)&MARRIAGE%in%c(1,2,3)]
 h2o_d<-as.h2o(df)
 h2o_sd<- h2o.splitFrame(h2o_d, ratios = c(.6, 0.2),seed=0706)
 names(h2o_sd) <- c("train", "valid", "test")
@@ -247,7 +253,7 @@ I extract the performance metrics from the model and use the model to predict ou
   
 I am going to use the F2 metric to decide the threshold in all models since it places more emphasis on False Negative, which is better in this scenario because a bank possibly prefer to incorrectly predict individuals to default than to have unexpected defaults. 
 
-```{r}
+```{r  cache=FALSE}
 NBev<-ggplot(h2o.F2(NBp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
   xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
@@ -268,26 +274,26 @@ NBat<-ggplot(NBrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("F
   
 The following two graphs show the metrics and ROC curve with different threshold for validation set and test set, both figures use a warmer color for lower threshold.  
 
-```{r fig.cap="F2-Threshold curve and ROC curve for validation set"}
+```{r fig.cap="F2-Threshold curve and ROC curve for the **validation set**", cache=FALSE}
 grid.arrange(NBev,NBav,ncol=1)
 ```
-```{r fig.cap="F2-Threshold curve and ROC curve for test set"}
+```{r fig.cap="F2-Threshold curve and ROC curve for the **test set**", cache=FALSE}
 grid.arrange(NBet,NBat,ncol=1)
 ```
   
 The blue dots on the graph indicate the threshold chosen and the confusion matricies are as follows:  
   
-Validation set:  
-```{r }
+**Validation set**:  
+```{r  cache=FALSE}
 pander(h2o.confusionMatrix(NBp,metrics="f2")[,1:3])
 ```
 
-Test set:  
-```{r }
+**Test set**:  
+```{r  cache=FALSE}
 pander(h2o.confusionMatrix(NBt,metrics="f2")[,1:3])
 ```
   
-In the prediction, we failed to identify `r round(h2o.confusionMatrix(NBt,metrics="f2")[2,3]*100,2)`% of the credit default, which we will use it as a benchmark for the following analysis. Note that we are going to have a high class error for the non-default class because we prefer false positive than false negative, the class error here is `r round(h2o.confusionMatrix(NBt,metrics="f2")[1,3]*100,2)`%.  
+The rows are the actual value and the columns are the prediction values. In the prediction, we failed to identify `r round(h2o.confusionMatrix(NBt,metrics="f2")[2,3]*100,2)`% of the credit default, which we will use it as a benchmark for the following analysis. Note that we are going to have a high class error for the non-default class because we prefer false positive than false negative, the class error here is `r round(h2o.confusionMatrix(NBt,metrics="f2")[1,3]*100,2)`%.  
   
 ### b. Logit Classifier with regularization (LASSO, ridge and Elastic Net)  
   
@@ -326,5 +332,153 @@ GLMrt<-cbind(h2o.fpr(GLMt),h2o.tpr(GLMt)$tpr)
 h2o.auc(GLMt)
 colnames(GLMrt)[3]<-"tpr"
 ```
+  
+I get an AUC of `r round(h2o.auc(GLMp),4)` for the validation set and an AUC of `r round(h2o.auc(GLMt),4)` for the test set, which are both better than the NB predictor. The following two graphs are the F2 to threshold curve and the ROC curve, the blue dots again indicate the threshold chosen.  
+```{r, cache=FALSE}
+GLMev<-ggplot(h2o.F2(GLMp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(GLMp,"f2"),y=h2o.F2(GLMp,h2o.find_threshold_by_max_metric(GLMp,"f2"))[[1]]),col="blue")
+GLMet<-ggplot(h2o.F2(GLMt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(GLMt,"f2"),y=h2o.F2(GLMt,h2o.find_threshold_by_max_metric(GLMt,"f2"))[[1]]),col="blue")
+GLMav<-ggplot(GLMrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+ylim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(GLMp,h2o.find_threshold_by_max_metric(GLMp,"f2"))[[1]],y=h2o.tpr(GLMp,h2o.find_threshold_by_max_metric(GLMp,"f2"))[[1]]),col="blue")
+GLMat<-ggplot(GLMrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+ylim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(GLMt,h2o.find_threshold_by_max_metric(GLMt,"f2"))[[1]],y=h2o.tpr(GLMt,h2o.find_threshold_by_max_metric(GLMt,"f2"))[[1]]),col="blue")
 
+```
+
+```{r fig.cap="F2-Threshold curve and ROC curve for the **validation set**", cache=FALSE}
+grid.arrange(GLMev,GLMav,ncol=1)
+```
+```{r fig.cap="F2-Threshold curve and ROC curve for the **test set**", cache=FALSE}
+grid.arrange(GLMet,GLMat,ncol=1)
+```
+  
+The confusion matricies are as follows:  
+**Validation set**:  
+```{r cache=FALSE}
+pander(h2o.confusionMatrix(GLMp,metrics="f2")[,1:3])
+```
+
+**Test set**:  
+```{r cache=FALSE}
+pander(h2o.confusionMatrix(GLMt,metrics="f2")[,1:3])
+```
+We failed to identify `r round(h2o.confusionMatrix(GLMt,metrics="f2")[2,3]*100,2)`% of the credit default in the test set, which is better than the NB classifier, but the class error of not defaulting is `r round(h2o.confusionMatrix(GLMt,metrics="f2")[1,3]*100,2)`%, worse than the NB predictor.  
+  
+I also plotted the graph showing the relative magnitude of the variables using color to indicate the sign of the coefficient.  
+```{r fig.cap="Relative magnitude of 10 most important variables"}
+ggplot(data.table(cbind(h2o.varimp(GLMb)$names[1:10],h2o.varimp(GLMb)$coefficients[1:10],h2o.varimp(GLMb)$sign[1:10]))[order(-V2)])+
+  geom_col(aes(x=V1,y=V2,fill=V3))+coord_flip()+scale_x_discrete(limits=rev(h2o.varimp(GLMb)$names[1:10]))+
+  theme(axis.text.x=element_blank(),axis.ticks=element_blank())+ylab("Magnitude")+xlab("Variable")+
+  scale_fill_discrete("Sign",labels=c("Negative","Positive"))
+```
+  
+From the graph above, we can see almost all the most important variables are payment status. The first three variables actually make sense because if you pay duly or just a little late, you are probably going to pay on time next time, but you are more likely to default if you for example are 2 months late. The education 4 is important as well, but since it is in the other category, not much can be interpreted.  
+  
+### c. Random Forest  
+Here I try to apply Random Forest, I defined a grid **RF** in H2O, then run grid search using different max tree depth and variables each tree, then I choose the best model with highest F2 metric.  
+```{r results="hide", message=FALSE, warning=FALSE,cache=FALSE}
+h2o.rm("RF")
+
+RF <- h2o.grid(
+  algorithm = "randomForest", 
+  grid_id = "RF",
+  hyper_params = list(max_depth=c(15,20,25),mtries=c(5,7,9)),
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
+  y="y",
+  seed=0706,
+  ntrees=100
+)
+RFm<-h2o.getGrid(
+  grid_id = "RF", 
+  sort_by = "F2",
+  decreasing = TRUE
+)
+
+RFb<- h2o.getModel(RFm@model_ids[[1]])
+```
+  
+The best model is the model with `r RFb@parameters$max_depth` as max tree depth and `r RFb@parameters$mtries` as variables each tree.  
+  
+I then extract the performance and do prediction on the test set.  
+```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
+RFp<-h2o.performance(RFb,valid=T)
+h2o.auc(RFp)
+RFrp<-cbind(h2o.fpr(RFp),h2o.tpr(RFp)$tpr)
+colnames(RFrp)[3]<-"tpr"
+RFt<-h2o.performance(RFb,newdata = h2o_sd$test)
+RFrt<-cbind(h2o.fpr(RFt),h2o.tpr(RFt)$tpr)
+h2o.auc(RFt)
+colnames(RFrt)[3]<-"tpr"
+```
+  
+I get an AUC of `r round(h2o.auc(RFp),4)` for the validation set and an AUC of `r round(h2o.auc(RFt),4)` for the test set, which are both better than the NB predictor, the AUC for validation set is slightly lower than that of GLM but the AUC for test set is higher. The following two graphs are the F2 to threshold curve and the ROC curve, the blue dots again indicate the threshold chosen.  
+
+```{r, cache=FALSE}
+RFev<-ggplot(h2o.F2(RFp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(RFp,"f2"),y=h2o.F2(RFp,h2o.find_threshold_by_max_metric(RFp,"f2"))[[1]]),col="blue")
+RFet<-ggplot(h2o.F2(RFt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(RFt,"f2"),y=h2o.F2(RFt,h2o.find_threshold_by_max_metric(RFt,"f2"))[[1]]),col="blue")
+RFav<-ggplot(RFrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+ylim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(RFp,h2o.find_threshold_by_max_metric(RFp,"f2"))[[1]],y=h2o.tpr(RFp,h2o.find_threshold_by_max_metric(RFp,"f2"))[[1]]),col="blue")
+RFat<-ggplot(RFrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+ylim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(RFt,h2o.find_threshold_by_max_metric(RFt,"f2"))[[1]],y=h2o.tpr(RFt,h2o.find_threshold_by_max_metric(RFt,"f2"))[[1]]),col="blue")
+
+```
+
+```{r fig.cap="F2-Threshold curve and ROC curve for the **validation set**", cache=FALSE}
+grid.arrange(RFev,RFav,ncol=1)
+```
+```{r fig.cap="F2-Threshold curve and ROC curve for the **test set**", cache=FALSE}
+grid.arrange(RFet,RFat,ncol=1)
+```
+    
+The confusion matrices are as follows:  
+**Validation set**:  
+```{r cache=FALSE}
+pander(h2o.confusionMatrix(RFp,metrics="f2")[,1:3])
+```
+
+**Test set**:  
+```{r cache=FALSE}
+pander(h2o.confusionMatrix(RFt,metrics="f2")[,1:3])
+```
+  
+We failed to identify `r round(h2o.confusionMatrix(RFt,metrics="f2")[2,3]*100,2)`% of the credit default in the test set which is higher than the NB estimator, and the class error of not defaulting is `r round(h2o.confusionMatrix(RFt,metrics="f2")[1,3]*100,2)`%, which is lower than the NB estimator.
+  
+The following graph shows the relative importance of the variables for random forest. 
+```{r cache=FALSE}
+ggplot(data.table(cbind(h2o.varimp(RFb)$variable[1:10],h2o.varimp(RFb)$scaled_importance[1:10],h2o.varimp(RFb)$relative_importance[1:10])))+
+  geom_col(aes(x=V1,y=as.numeric(V2),fill=as.numeric(V3)))+coord_flip()+scale_x_discrete(limits=rev(h2o.varimp(RFb)$variable[1:10]))+
+  scale_y_continuous(breaks=seq(0,1,0.25))+
+  theme(axis.ticks=element_blank())+ylab("Relative Importance")+xlab("Variable")+
+  scale_fill_distiller(palette="Spectral",guide=F)
+```
+  
+Payment status are the most important variables but this time age, log credit limit and credit limit are also important to the prediction.  
+
+
+
+
+```{r results="hide"}
+#h2o.shutdown(prompt=F)
+```
 
