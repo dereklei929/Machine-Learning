@@ -125,20 +125,49 @@ h2o.removeAll()
 
 
 df<-d
-df[,arr_delay:=as.factor(ifelse(arr_delay>15,1,0))]
 set.seed(0706)
-N1<-nrow(df)
-vt<-sample(1:N1,0.6*N1)
-d_train<-df[vt,]
-d_vt<-df[-vt,]
-N2<-nrow(d_vt)
-t<-sample(1:N2,0.5*N2)
-d_valid<-d_vt[t,]
-d_test<-d_vt[-t,]
+df[,y:=as.factor(y)]
+h2o_d<-as.h2o(df)
+h2o_sd<- h2o.splitFrame(h2o_d, ratios = c(.6, 0.2) )
+names(h2o_sd) <- c('train', 'valid', 'test')
 
-dx_train <- as.h2o(d_train)  ## uploads data to H2O
-dx_valid<- as.h2o(d_valid)  ## uploads data to H2O
-dx_test <- as.h2o(d_test)
+
+#NB
+NB<-h2o.naiveBayes(
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
+  y="y",
+  seed=0706
+)
+NBp<-h2o.performance(NB)
+h2o.auc(NBp)
+NBrp<-cbind(h2o.fpr(NBp),h2o.tpr(NBp)$tpr)
+colnames(NBrp)[3]<-"tpr"
+NBt<-h2o.performance(NB,newdata = h2o_sd$test)
+NBrt<-cbind(h2o.fpr(NBt),h2o.tpr(NBt)$tpr)
+h2o.auc(NBt)
+colnames(NBrt)[3]<-"tpr"
+
+NBev<-ggplot(h2o.F2(NBp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")
+NBet<-ggplot(h2o.F2(NBt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")
+NBav<-ggplot(NBrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+NBat<-ggplot(NBrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+
+grid.arrange(NBev,NBav,ncol=1)
+grid.arrange(NBet,NBat,ncol=1)
+
+h2o.confusionMatrix(NBp,metrics="f2")[,1:3]
+h2o.confusionMatrix(NBt,metrics="f2")[,1:3]
+
 
 #Elastic Net
 
@@ -147,18 +176,17 @@ GLM <- h2o.grid(
   algorithm = "glm", 
   grid_id = "GLM",
   hyper_params = list(alpha = c(0,0.5,1)),
-  training_frame = dx_train,
-  validation_frame = dx_valid,
-  x=colnames(dx_train)[-24],
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
   y="y",
   seed=0706,
-  nfolds = 5,
   family = "binomial"
 )
 
 GLMm<-h2o.getGrid(
   grid_id = "GLM", 
-  sort_by = "AUC",
+  sort_by = "F2",
   decreasing = TRUE
 )
 
@@ -167,21 +195,23 @@ GLMp<-h2o.performance(GLMb)
 h2o.auc(GLMp)
 GLMrp<-cbind(h2o.fpr(GLMp),h2o.tpr(GLMp)$tpr)
 colnames(GLMrp)[3]<-"tpr"
-GLMt<-h2o.performance(GLMb,newdata = dx_test)
+GLMt<-h2o.performance(GLMb,newdata = h2o_sd$test)
 GLMrt<-cbind(h2o.fpr(GLMt),h2o.tpr(GLMt)$tpr)
 h2o.auc(GLMt)
 colnames(GLMrt)[3]<-"tpr"
 
-GLMev<-ggplot(h2o.F1(GLMp))+geom_line(aes(x=threshold,y=f1,color=threshold),size=1)+
+GLMev<-ggplot(h2o.F2(GLMp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F1 Metric")
-GLMet<-ggplot(h2o.F1(GLMt))+geom_line(aes(x=threshold,y=f1,color=threshold),size=1)+
+  xlab("Threshold")+ylab("F2 Metric")
+GLMet<-ggplot(h2o.F2(GLMt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F1 Metric")
+  xlab("Threshold")+ylab("F2 Metric")
 GLMav<-ggplot(GLMrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
-  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
 GLMat<-ggplot(GLMrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
-  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
 
 grid.arrange(GLMev,GLMav,ncol=1)
 grid.arrange(GLMet,GLMat,ncol=1)
@@ -191,24 +221,83 @@ ggplot(data.table(cbind(h2o.varimp(GLMb)$names[1:10],h2o.varimp(GLMb)$coefficien
   theme(axis.text.x=element_blank(),axis.ticks=element_blank())+ylab("Magnitude")+xlab("Variable")+
   scale_fill_discrete("Sign",labels=c("Negative","Positive"))
 
+
+h2o.confusionMatrix(GLMp,metrics="f2")[,1:3]
+h2o.confusionMatrix(GLMt,metrics="f2")[,1:3]
+
+
 #Random Forest
 h2o.rm("RF")
-?h2o.grid
+
 RF <- h2o.grid(
   algorithm = "randomForest", 
   grid_id = "RF",
-  hyper_params = list(alpha = c(0,0.5,1)),
-  training_frame = dx_train,
-  validation_frame = dx_valid,
-  x=colnames(dx_train)[-24],
+  hyper_params = list(max_depth=c(15,20,25),mtries=c(5,7,9)),
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
   y="y",
   seed=0706,
-  nfolds = 5,
-  family = "binomial"
+  ntrees=100
 )
 
-GLMm<-h2o.getGrid(
-  grid_id = "GLM", 
-  sort_by = "AUC",
+RFm<-h2o.getGrid(
+  grid_id = "RF", 
+  sort_by = "F2",
   decreasing = TRUE
 )
+
+RFb<- h2o.getModel(RFm@model_ids[[1]])
+RFp<-h2o.performance(RFb)
+h2o.auc(RFp)
+RFrp<-cbind(h2o.fpr(RFp),h2o.tpr(RFp)$tpr)
+colnames(RFrp)[3]<-"tpr"
+RFt<-h2o.performance(RFb,newdata = h2o_sd$test)
+RFrt<-cbind(h2o.fpr(RFt),h2o.tpr(RFt)$tpr)
+h2o.auc(RFt)
+colnames(RFrt)[3]<-"tpr"
+
+RFev<-ggplot(h2o.F2(RFp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")
+RFet<-ggplot(h2o.F2(RFt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")
+RFav<-ggplot(RFrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+RFat<-ggplot(RFrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+
+grid.arrange(RFev,RFav,ncol=1)
+grid.arrange(RFet,RFat,ncol=1)
+
+ggplot(data.table(cbind(h2o.varimp(RFb)$variable[1:10],h2o.varimp(RFb)$scaled_importance[1:10],h2o.varimp(RFb)$relative_importance[1:10])))+
+  geom_col(aes(x=V1,y=as.numeric(V2),fill=as.numeric(V3)))+coord_flip()+scale_x_discrete(limits=rev(h2o.varimp(RFb)$variable[1:10]))+
+  scale_y_continuous(breaks=seq(0,1,0.25))+
+  theme(axis.ticks=element_blank())+ylab("Relative Importance")+xlab("Variable")+
+  scale_fill_distiller(palette="Spectral",guide=F)
+
+h2o.confusionMatrix(RFp,metrics="f2")[,1:3]
+h2o.confusionMatrix(RFt,metrics="f2")[,1:3]
+
+#GBM
+h2o.rm("GBM")
+GBM<-h2o.grid(
+  algorithm = "gbm", 
+  grid_id = "GBM",
+  hyper_params = list(learn_rate=c(0.06,0.07,0.08,0.09,0.1,0.11),max_depth=c(5,6,7)),
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
+  y="y",
+  seed=0706,
+  ntrees=100
+)
+GBMm<-h2o.getGrid(
+  grid_id = "GBM", 
+  sort_by = "F2",
+  decreasing = TRUE
+)
+h2o.getModel("GBM_model_13")
