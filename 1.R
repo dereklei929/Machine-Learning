@@ -84,6 +84,7 @@ ggplot(d[,mean(y),by=(round(exp(round(log(d$LIMIT_BAL),2))))])+geom_smooth(aes(x
 
 
 
+
 d$LLIMIT_BAL<-log(d$LIMIT_BAL)
 d$LBILL_AMT1<-ifelse(d$BILL_AMT1>0,log(d$BILL_AMT1),0)
 d$LBILL_AMT2<-ifelse(d$BILL_AMT2>0,log(d$BILL_AMT2),0)
@@ -131,6 +132,7 @@ h2o_d<-as.h2o(df)
 h2o_sd<- h2o.splitFrame(h2o_d, ratios = c(.6, 0.2) )
 names(h2o_sd) <- c('train', 'valid', 'test')
 
+# pairs(dr[,.(PAY_AMT1,PAY_AMT2,PAY_AMT3)])
 
 #NB
 NB<-h2o.naiveBayes(
@@ -140,7 +142,7 @@ NB<-h2o.naiveBayes(
   y="y",
   seed=0706
 )
-NBp<-h2o.performance(NB)
+NBp<-h2o.performance(NB,valid=T)
 h2o.auc(NBp)
 NBrp<-cbind(h2o.fpr(NBp),h2o.tpr(NBp)$tpr)
 colnames(NBrp)[3]<-"tpr"
@@ -149,23 +151,33 @@ NBrt<-cbind(h2o.fpr(NBt),h2o.tpr(NBt)$tpr)
 h2o.auc(NBt)
 colnames(NBrt)[3]<-"tpr"
 
+
 NBev<-ggplot(h2o.F2(NBp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F2 Metric")
+  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(NBp,"f2"),y=h2o.F2(NBp,h2o.find_threshold_by_max_metric(NBp,"f2"))[[1]]),col="blue")
 NBet<-ggplot(h2o.F2(NBt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F2 Metric")
+  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(NBt,"f2"),y=h2o.F2(NBt,h2o.find_threshold_by_max_metric(NBt,"f2"))[[1]]),col="blue")
 NBav<-ggplot(NBrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(NBp,h2o.find_threshold_by_max_metric(NBp,"f2"))[[1]],y=h2o.tpr(NBp,h2o.find_threshold_by_max_metric(NBp,"f2"))[[1]]),col="blue")
 NBat<-ggplot(NBrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(NBt,h2o.find_threshold_by_max_metric(NBt,"f2"))[[1]],y=h2o.tpr(NBt,h2o.find_threshold_by_max_metric(NBt,"f2"))[[1]]),col="blue")
+
 
 grid.arrange(NBev,NBav,ncol=1)
 grid.arrange(NBet,NBat,ncol=1)
 
-h2o.confusionMatrix(NBp,metrics="f2")[,1:3]
+
+h2o.find_threshold_by_max_metric(NBp,"f2")
+h2o.F2(NBp,h2o.find_threshold_by_max_metric(NBp,"f2"))[[1]]
+
+h2o.confusionMatrix(NBp,metrics="f2")
 h2o.confusionMatrix(NBt,metrics="f2")[,1:3]
 
 
@@ -191,11 +203,13 @@ GLMm<-h2o.getGrid(
 )
 
 GLMb<- h2o.getModel(GLMm@model_ids[[1]])
-GLMp<-h2o.performance(GLMb)
+GLMb@parameters$alpha
+
+GLMp<-h2o.performance(GLMb,valid=T)
 h2o.auc(GLMp)
 GLMrp<-cbind(h2o.fpr(GLMp),h2o.tpr(GLMp)$tpr)
 colnames(GLMrp)[3]<-"tpr"
-GLMt<-h2o.performance(GLMb,newdata = h2o_sd$test)
+GLMt<-h2o.performance(GLMb,newdata = h2o_sd$test,xval=T)
 GLMrt<-cbind(h2o.fpr(GLMt),h2o.tpr(GLMt)$tpr)
 h2o.auc(GLMt)
 colnames(GLMrt)[3]<-"tpr"
@@ -220,7 +234,6 @@ ggplot(data.table(cbind(h2o.varimp(GLMb)$names[1:10],h2o.varimp(GLMb)$coefficien
   geom_col(aes(x=V1,y=V2,fill=V3))+coord_flip()+scale_x_discrete(limits=rev(h2o.varimp(GLMb)$names[1:10]))+
   theme(axis.text.x=element_blank(),axis.ticks=element_blank())+ylab("Magnitude")+xlab("Variable")+
   scale_fill_discrete("Sign",labels=c("Negative","Positive"))
-
 
 h2o.confusionMatrix(GLMp,metrics="f2")[,1:3]
 h2o.confusionMatrix(GLMt,metrics="f2")[,1:3]
@@ -248,7 +261,10 @@ RFm<-h2o.getGrid(
 )
 
 RFb<- h2o.getModel(RFm@model_ids[[1]])
-RFp<-h2o.performance(RFb)
+RFb@parameters$max_depth
+RFb@parameters$mtries
+
+RFp<-h2o.performance(RFb,valid=T)
 h2o.auc(RFp)
 RFrp<-cbind(h2o.fpr(RFp),h2o.tpr(RFp)$tpr)
 colnames(RFrp)[3]<-"tpr"
@@ -287,7 +303,7 @@ h2o.rm("GBM")
 GBM<-h2o.grid(
   algorithm = "gbm", 
   grid_id = "GBM",
-  hyper_params = list(learn_rate=c(0.06,0.07,0.08,0.09,0.1,0.11),max_depth=c(5,6,7)),
+  hyper_params = list(learn_rate=c(0.06,0.07,0.08,0.09,0.1),max_depth=c(4,5,6,7)),
   training_frame = h2o_sd$train,
   validation_frame = h2o_sd$valid,
   x=colnames(h2o_sd$train)[-24],
@@ -300,4 +316,97 @@ GBMm<-h2o.getGrid(
   sort_by = "F2",
   decreasing = TRUE
 )
-h2o.getModel("GBM_model_13")
+
+GBMb<- h2o.getModel(GBMm@model_ids[[1]])
+GBMb@parameters$learn_rate
+GBMb@parameters$max_depth
+
+GBMp<-h2o.performance(GBMb,valid=T)
+
+h2o.auc(GBMp)
+GBMrp<-cbind(h2o.fpr(GBMp),h2o.tpr(GBMp)$tpr)
+colnames(GBMrp)[3]<-"tpr"
+GBMt<-h2o.performance(GBMb,newdata = h2o_sd$test)
+GBMrt<-cbind(h2o.fpr(GBMt),h2o.tpr(GBMt)$tpr)
+h2o.auc(GBMt)
+colnames(GBMrt)[3]<-"tpr"
+
+GBMev<-ggplot(h2o.F2(GBMp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")
+GBMet<-ggplot(h2o.F2(GBMt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")
+GBMav<-ggplot(GBMrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+GBMat<-ggplot(GBMrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+
+grid.arrange(GBMev,GBMav,ncol=1)
+grid.arrange(GBMet,GBMat,ncol=1)
+
+
+ggplot(data.table(cbind(h2o.varimp(GBMb)$variable[1:10],h2o.varimp(GBMb)$scaled_importance[1:10],h2o.varimp(GBMb)$relative_importance[1:10])))+
+  geom_col(aes(x=V1,y=as.numeric(V2),fill=as.numeric(V3)))+coord_flip()+scale_x_discrete(limits=rev(h2o.varimp(GBMb)$variable[1:10]))+
+  scale_y_continuous(breaks=seq(0,1,0.25))+
+  theme(axis.ticks=element_blank())+ylab("Relative Importance")+xlab("Variable")+
+  scale_fill_distiller(palette="Spectral",guide=F)
+
+h2o.confusionMatrix(GBMp,metrics="f2")[,1:3]
+h2o.confusionMatrix(GBMt,metrics="f2")[,1:3]
+
+#NN
+h2o.rm("NN")
+
+NN<-h2o.grid(
+  algorithm = "deeplearning", 
+  grid_id = "NN",
+  hyper_params = list(rate=c(0.03,0.04,0.05,0.06,0.07),activation=c("Tanh","Rectifier","TanhWithDropout","RectifierWithDropout")),
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
+  y="y",
+  seed=0706
+)
+NNm<-h2o.getGrid(
+  grid_id = "NN", 
+  sort_by = "F2",
+  decreasing = TRUE
+)
+
+NNb<- h2o.getModel(NNm@model_ids[[1]])
+NNb@parameters$rate
+NNb@parameters$activation
+
+NNp<-h2o.performance(NNb,valid=T)
+
+h2o.auc(NNp)
+NNrp<-cbind(h2o.fpr(NNp),h2o.tpr(NNp)$tpr)
+colnames(NNrp)[3]<-"tpr"
+NNt<-h2o.performance(NNb,newdata = h2o_sd$test)
+NNrt<-cbind(h2o.fpr(NNt),h2o.tpr(NNt)$tpr)
+h2o.auc(NNt)
+colnames(NNrt)[3]<-"tpr"
+
+NNev<-ggplot(h2o.F2(NNp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")
+NNet<-ggplot(h2o.F2(NNt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")
+NNav<-ggplot(NNrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+NNat<-ggplot(NNrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")
+
+grid.arrange(NNev,NNav,ncol=1)
+grid.arrange(NNet,NNat,ncol=1)
+
+
+h2o.confusionMatrix(NNp,metrics="f2")[,1:3]
+h2o.confusionMatrix(NNt,metrics="f2")[,1:3]
+h2o.shutdown(prompt=F)

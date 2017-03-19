@@ -1,9 +1,12 @@
 ---
-title: "DS_Proj"
+title: "Data Science Homework Data Analysis Project"
 author: "Kai Yip Lei (Derek)"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output:
-  html_document: default
+  prettydoc::html_pretty:
+  toc : true
+  toc_float : true
+
 ---
 
 ## 1. Setup, Loading libraries and Data  
@@ -36,6 +39,7 @@ opts_chunk$set(cache=TRUE)
 options(digit=4)
 ```
   
+The original dataset has `r nrow(dr)` observations and `r ncol(dr)-1` features, it can be downloaded from [here](http://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients).
 The response variable **Default Payment Next Month** was renamed to **y** for convenience and the seed was set to **0706** here to ensure reproducibility.  
   
 ## 2. Exploratory data analysis & Feature Engineering  
@@ -44,13 +48,283 @@ The response variable **Default Payment Next Month** was renamed to **y** for co
 
 The variables in the dataset are defined as follows:  
 
+* __default.payment.next.month.__ : default payment next month(Yes = 1, No = 0).  
 * __ID__ : ID of the individual consumer.  
 * __LIMIT_BAL__ : Amount of the given credit (NT dollar): it includes both the individual consumer credit and his/her family (supplementary) credit.  
 * __SEX__ : Gender (1 = male; 2 = female).  
 * __EDUCATION__ : Education (1 = graduate school; 2 = university; 3 = high school; 4 = others).  
 * __MARRIAGE__ : Marital status (1 = married; 2 = single; 3 = others).  
 * __AGE__ : Age (year).  
-* __PAY_0__ - __PAY_6__ : History of past payment. Past monthly payment records. __PAY_0__ = the repayment status in September, 2005; __PAY_2__ = the repayment status in August, 2005; . . .;__PAY_6__ = the repayment status in April, 2005. The measurement scale for the repayment status is: -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months; . . .; 8 = payment delay for eight months; 9 = payment delay for nine months and above.  
+* __PAY_0__ - __PAY_6__ : History of past payment. Past monthly payment records. __PAY_0__ = the repayment status in September, 2005; __PAY_2__ = the repayment status in August, 2005; . . .; __PAY_6__ = the repayment status in April, 2005. The measurement scale for the repayment status is: -1 = pay duly; 1 = payment delay for one month; 2 = payment delay for two months; . . .; 8 = payment delay for eight months; 9 = payment delay for nine months and above.  
 * __BILL_AMT1__ - __BILL_AMT6__ : Amount of bill statement (NT dollar). __BILL_AMT1__ = amount of bill statement in September, 2005; __BILL_AMT2__ = amount of bill statement in August, 2005; . . .; __BILL_AMT6__ = amount of bill statement in April, 2005.
 * __PAY_AMT1__ - __PAY_AMT6__ : Amount of previous payment (NT dollar). __PAY_AMT1__ = amount paid in September, 2005; __PAY_AMT2__ = amount paid in August, 2005; . . .; __PAY_AMT6__ = amount paid in April, 2005.  
+  
+### b. Exploratory data analysis  
+I manipulated the data a bit here before doing any analysis. The variable **ID** is dropped because it is meaningless and unique to every individual. Variables **SEX**, **EDUCATION** and **MARRIAGE** are converted to factors because they should be categorical instead of numerical.  
+```{r results="hide", message=FALSE, warning=FALSE}
+d<-data.table(dr)
+d[,ID:=NULL]
+d[,SEX:=factor(SEX,levels=c("1","2"),labels=c("Male","Female"))]
+d[,EDUCATION:=as.factor(EDUCATION)]
+d[,MARRIAGE:=as.factor(MARRIAGE)]
+
+```
+  
+The following graphs are the histograms of the variable **SEX**, **EDUCATION** and **MARRIAGE**. The variable **SEX** looks slightly skewed, having more female than male. Although most of the observations are from individuals with high school or higher education and either single or married, a few of them are in the others category for education or marriage. Note that there are unknown education and marriage category that are not described in the dataset nor the research paper, luckily they only consist a very small amount of the total data so it should not affect my analysis.  
+```{r fig.cap="Histograms of **SEX**, **EDUCATION** and **MARRIAGE**", message=FALSE, warning=FALSE}
+
+ggplot(data.table(gather(d[,.(SEX,EDUCATION,MARRIAGE)],K,V)))+geom_bar(aes(x=V,fill=V))+facet_wrap(~K,scales="free")+
+  xlab("")+ylab("Count")+scale_fill_brewer(palette = "Spectral",guide=FALSE)
+  
+```
+  
+In addition, the following graphs show the heatmap of the probability of having a credit default next month for different type of individuals, a warmer color indicates a higher default probability.  
+```{r fig.cap="Heatmap of the probability of credit default", message=FALSE, warning=FALSE}
+
+ggplot(d[EDUCATION%in%c("1","2","3","4")&MARRIAGE%in%c("1","2","3"),mean(y),by=.(SEX,EDUCATION,MARRIAGE)],aes(x=EDUCATION,y=MARRIAGE))+geom_tile(aes(fill=V1))+facet_wrap(~SEX)+
+  scale_fill_distiller(palette="Spectral","Probability")
+```
+  
+We can see that individuals with higher education are less likely to have credit default, except for post-graduate individuals with marital status of 3 (probably divorced). Another observation is that female individuals are generally less likely to have default compared to male individuals, it implies that men and women may have different patterns of paying bills and gender might be one of the important variables in the analysis.  
+  
+***  
+  
+Since Payment status variables are not continuous, I converted them to factors as well. (For example, status -1 means that the individual paid duly, which is not comparable with the individual paid 1 month late.)  
+```{r}
+
+d$PAY_0<-as.factor(d$PAY_0)
+d$PAY_2<-as.factor(d$PAY_2)
+d$PAY_3<-as.factor(d$PAY_3)
+d$PAY_4<-as.factor(d$PAY_4)
+d$PAY_5<-as.factor(d$PAY_5)
+d$PAY_6<-as.factor(d$PAY_6)
+```
+The follow graphs are the histograms of payment status 0-6.  
+```{r fig.cap="Histograms of payment status **PAY_0** - **PAY_6**", message=FALSE, warning=FALSE}
+
+ggplot(data.table(gather(d[,.(PAY_0,PAY_2,PAY_3,PAY_4,PAY_5,PAY_6)],K,V)))+geom_bar(aes(x=V,fill=log(..count..)))+facet_wrap(~K)+scale_x_discrete(limits=sort(d[,.N,by=.(PAY_0)]$PAY_0))+scale_fill_distiller(palette="Spectral",guide=FALSE)+
+  xlab("Payment Status")+ylab("Count")
+```
+  
+Most of the individuals pay a little late but less than 1 month. An interesting observation is that there are more people paying late for 2 months than for 1 month.  
+  
+***  
+  
+The follow figures are the histograms of bill amount 1-6, in both real amount and log amount.  
+```{r fig.cap=c("Histograms of bill amount **BILL_AMT1** - **BILL_AMT6**","Histograms of log bill amount **BILL_AMT1** - **BILL_AMT6**"), message=FALSE, warning=FALSE}
+
+ggplot(data.table(gather(d[,.(BILL_AMT1,BILL_AMT2,BILL_AMT3,BILL_AMT4,BILL_AMT5,BILL_AMT6)],K,V)))+geom_histogram(aes(x=V,fill=log(..count..)))+
+  facet_wrap(~K)+scale_fill_distiller(palette="Spectral",guide=FALSE)+xlab("Bill amount")+ylab("Count")
+
+ggplot(data.table(gather(d[,.(BILL_AMT1,BILL_AMT2,BILL_AMT3,BILL_AMT4,BILL_AMT5,BILL_AMT6)],K,V))[V>0])+geom_histogram(aes(x=log(V),fill=log(..count..)))+
+  facet_wrap(~K)+scale_fill_distiller(palette="Spectral",guide=FALSE)+xlab("Log bill amount")+ylab("Count")
+```
+  
+From the figures above, we can see that bill amounts can be negative here, possibly due to over payment. The bill amounts are very skewed and have long right tails, the log amounts are less skewed but instead have long left tails.  
+  
+We do the same for payment amounts, the follow figures are the histograms of payment amount 1-6, in both real amount and log amount. 
+```{r fig.cap=c("Histograms of payment amount **PAY_AMT1** - **PAY_AMT6**","Histograms of log bill amount **PAY_AMT1** - **PAY_AMT6**"), message=FALSE, warning=FALSE}
+ggplot(data.table(gather(d[,.(PAY_AMT1,PAY_AMT2,PAY_AMT3,PAY_AMT4,PAY_AMT5,PAY_AMT6)],K,V)))+geom_histogram(aes(x=V,fill=log(..count..)))+
+  facet_wrap(~K)+scale_fill_distiller(palette="Spectral",guide=FALSE)+xlab("Payment amount")+ylab("Count")
+
+ggplot(data.table(gather(d[,.(PAY_AMT1,PAY_AMT2,PAY_AMT3,PAY_AMT4,PAY_AMT5,PAY_AMT6)],K,V))[V>0])+geom_histogram(aes(x=log(V),fill=log(..count..)))+
+  facet_wrap(~K)+scale_fill_distiller(palette="Spectral",guide=FALSE)+xlab("Log payment amount")+ylab("Count")
+```
+  
+The payment amounts cannot be negative here, but again the bill amounts are very skewed and have long right tails, the log amounts this time are much less skewed.   
+  
+We investigate further using the following graphs.  
+```{r fig.cap=c("Heatmap of total bill amount against total payment amount","Default probability against differece of log bill and payment amount"), message=FALSE, warning=FALSE}
+ggplot(d[(BILL_AMT2+BILL_AMT3+BILL_AMT4+BILL_AMT5+BILL_AMT6>0)&(PAY_AMT1+PAY_AMT2+PAY_AMT3+PAY_AMT4+PAY_AMT5>0)])+geom_hex(aes(x=log(BILL_AMT2+BILL_AMT3+BILL_AMT4+BILL_AMT5+BILL_AMT6),y=log(PAY_AMT1+PAY_AMT2+PAY_AMT3+PAY_AMT4+PAY_AMT5)))+
+  scale_fill_distiller(palette="Spectral")+xlab("Log Bill amount from Apr to Aug")+ylab("Log Payment amount from May to Sep")+geom_abline(col="#00BFC4")
+
+ggplot(d)+
+  geom_smooth(se=F,aes(x=log(BILL_AMT2)-log(PAY_AMT1),y=y,col="Aug 2005"))+
+  geom_smooth(se=F,aes(x=log(BILL_AMT3)-log(PAY_AMT2),y=y,col="Jul 2005"))+
+  geom_smooth(se=F,aes(x=log(BILL_AMT4)-log(PAY_AMT3),y=y,col="Jun 2005"))+
+  geom_smooth(se=F,aes(x=log(BILL_AMT5)-log(PAY_AMT4),y=y,col="May 2005"))+
+  geom_smooth(se=F,aes(x=log(BILL_AMT6)-log(PAY_AMT5),y=y,col="Apr 2005"))+
+  xlab("Difference of log bill and log payment")+ylab("Default probability")+
+  scale_color_brewer(palette="Spectral","Month")
+```
+  
+The first graph is a heatmap of bill amount against payment amount, a significant number of observations lie on the 45 degree line and those individuals probably always pay the exact bill amount. A lot of people pay less than the bill amount and there is a blue horizontal segment at around log payment amount equals to 6, these people may represent individuals that only pay the minimum required payment.  
+  
+The second graph shows the relation of default probability and the difference of log bill and log payment amount. Default probability is lowest when the difference is almost 0, which means that those who pay the exact bill amount are less likely to have credit default next month. while it is obvious that default probability is high when difference of log bill and log payment is positive, it is high when the difference is negative as well, those customers probably paid more because they have overdue from previous months.  
+  
+***  
+  
+The final variable is the credit limit, the following graphs are the histogram and its relation with the default probability.  
+```{r fig.cap=c("Histogram of **LIMIT_BAL**","Default probability against **LIMIT_BAL**"), message=FALSE, warning=FALSE}
+ggplot(d)+geom_histogram(aes(x=LIMIT_BAL,fill=..count..))+scale_fill_distiller(palette="Spectral")
+
+ggplot(d[,mean(y),by=(round(exp(round(log(d$LIMIT_BAL),2))))])+geom_smooth(aes(x=round,y=V1),se=F)+
+  xlab("Amount of the given credit (NT dollar)")+ylab("Default probability")
+```
+  
+Credit limit has a very significant negative correlation with default probability, which makes sense because banks only give high limit to those who always pay duly.  
+  
+Since **LIMIT_BAL**, **BILL_AMT** and **PAY_AMT** are skewed, log variables of these variables are also created. For negative values or zeros, flags are also created to distinguish these observations.  
+```{r, message=FALSE, warning=FALSE}
+d$LLIMIT_BAL<-log(d$LIMIT_BAL)
+d$LBILL_AMT1<-ifelse(d$BILL_AMT1>0,log(d$BILL_AMT1),0)
+d$LBILL_AMT2<-ifelse(d$BILL_AMT2>0,log(d$BILL_AMT2),0)
+d$LBILL_AMT3<-ifelse(d$BILL_AMT3>0,log(d$BILL_AMT3),0)
+d$LBILL_AMT4<-ifelse(d$BILL_AMT4>0,log(d$BILL_AMT4),0)
+d$LBILL_AMT5<-ifelse(d$BILL_AMT5>0,log(d$BILL_AMT5),0)
+d$LBILL_AMT6<-ifelse(d$BILL_AMT6>0,log(d$BILL_AMT6),0)
+d$LPAY_AMT1<-ifelse(d$PAY_AMT1>0,log(d$PAY_AMT1),0)
+d$LPAY_AMT2<-ifelse(d$PAY_AMT2>0,log(d$PAY_AMT2),0)
+d$LPAY_AMT3<-ifelse(d$PAY_AMT3>0,log(d$PAY_AMT3),0)
+d$LPAY_AMT4<-ifelse(d$PAY_AMT4>0,log(d$PAY_AMT4),0)
+d$LPAY_AMT5<-ifelse(d$PAY_AMT5>0,log(d$PAY_AMT5),0)
+d$LPAY_AMT6<-ifelse(d$PAY_AMT6>0,log(d$PAY_AMT6),0)
+
+d$BILL_AMT1_0<-ifelse(d$BILL_AMT1==0,1,0)
+d$BILL_AMT2_0<-ifelse(d$BILL_AMT2==0,1,0)
+d$BILL_AMT3_0<-ifelse(d$BILL_AMT3==0,1,0)
+d$BILL_AMT4_0<-ifelse(d$BILL_AMT4==0,1,0)
+d$BILL_AMT5_0<-ifelse(d$BILL_AMT5==0,1,0)
+d$BILL_AMT6_0<-ifelse(d$BILL_AMT6==0,1,0)
+
+d$BILL_AMT1_N<-ifelse(d$BILL_AMT1<0,1,0)
+d$BILL_AMT2_N<-ifelse(d$BILL_AMT2<0,1,0)
+d$BILL_AMT3_N<-ifelse(d$BILL_AMT3<0,1,0)
+d$BILL_AMT4_N<-ifelse(d$BILL_AMT4<0,1,0)
+d$BILL_AMT5_N<-ifelse(d$BILL_AMT5<0,1,0)
+d$BILL_AMT6_N<-ifelse(d$BILL_AMT6<0,1,0)
+
+d$PAY_AMT1_0<-ifelse(d$PAY_AMT1==0,1,0)
+d$PAY_AMT2_0<-ifelse(d$PAY_AMT2==0,1,0)
+d$PAY_AMT3_0<-ifelse(d$PAY_AMT3==0,1,0)
+d$PAY_AMT4_0<-ifelse(d$PAY_AMT4==0,1,0)
+d$PAY_AMT5_0<-ifelse(d$PAY_AMT5==0,1,0)
+d$PAY_AMT6_0<-ifelse(d$PAY_AMT6==0,1,0)
+```
+  
+## 3. Predictive Analysis  
+
+I decided to use H2O because its standardized syntax, it also supports grid search natively which can be useful in the following analysis. I start up H2O using 6 threads, and then removed all existing data in H2O.  
+
+```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
+library(h2o)
+h2o.init(nthreads = 6)
+h2o.removeAll()
+```
+  
+Since my response variable is also a categorical value, I converted it to a factor and upload the whole dataset to H2O. Using the *h2o.splitFrame* function, I splitted the dataset into three parts in a ratio of 6:2:2, and named them train, valid and test respectively.  
+```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
+df<-d
+df[,y:=as.factor(y)]
+h2o_d<-as.h2o(df)
+h2o_sd<- h2o.splitFrame(h2o_d, ratios = c(.6, 0.2),seed=0706)
+names(h2o_sd) <- c("train", "valid", "test")
+```
+
+After splitting, there are `r attributes(h2o_sd$train)$nrow`, `r attributes(h2o_sd$valid)$nrow` and `r attributes(h2o_sd$test)$nrow` observations in the training set, validation set and test set respectively and each with `r ncol(df)` features. In the following analysis, I will start with Naive Bayes as a benchmark, and compare the performance of GLM (Elastic Net regularized logit regression), Random Forest, Gradient Machine Boosting and finally Artificial Neural Network.  
+  
+### a. Naive Bayes Classifier  
+Here I used the function *h2o.naiveBayes* to predict the credit default using Naive Bayes Classifier, using **y** as the response variable, all other variables as features. Note that the seed here is not really doing anything but just to standardize the code because I am going to use the same seed in other models.  
+```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
+NB<-h2o.naiveBayes(
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
+  y="y",
+  seed=0706
+)
+NBp<-h2o.performance(NB)
+h2o.auc(NBp)
+NBrp<-cbind(h2o.fpr(NBp),h2o.tpr(NBp)$tpr)
+colnames(NBrp)[3]<-"tpr"
+NBt<-h2o.performance(NB,newdata = h2o_sd$test)
+NBrt<-cbind(h2o.fpr(NBt),h2o.tpr(NBt)$tpr)
+h2o.auc(NBt)
+colnames(NBrt)[3]<-"tpr"
+```
+  
+I extract the performance metrics from the model and use the model to predict outcomes in the test set. Overall I get an AUC of `r round(h2o.auc(NBp),4)` for the validation set and an AUC of `r round(h2o.auc(NBt),4)` for the test set, which is pretty good given the simplicity of the model.  
+  
+I am going to use the F2 metric to decide the threshold in all models since it places more emphasis on False Negative, which is better in this scenario because a bank possibly prefer to incorrectly predict individuals to default than to have unexpected defaults. 
+
+```{r}
+NBev<-ggplot(h2o.F2(NBp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(NBp,"f2"),y=h2o.F2(NBp,h2o.find_threshold_by_max_metric(NBp,"f2"))[[1]]),col="blue")
+NBet<-ggplot(h2o.F2(NBt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(NBt,"f2"),y=h2o.F2(NBt,h2o.find_threshold_by_max_metric(NBt,"f2"))[[1]]),col="blue")
+NBav<-ggplot(NBrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+ylim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(NBp,h2o.find_threshold_by_max_metric(NBp,"f2"))[[1]],y=h2o.tpr(NBp,h2o.find_threshold_by_max_metric(NBp,"f2"))[[1]]),col="blue")
+NBat<-ggplot(NBrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+ylim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(NBt,h2o.find_threshold_by_max_metric(NBt,"f2"))[[1]],y=h2o.tpr(NBt,h2o.find_threshold_by_max_metric(NBt,"f2"))[[1]]),col="blue")
+```
+  
+The following two graphs show the metrics and ROC curve with different threshold for validation set and test set, both figures use a warmer color for lower threshold.  
+
+```{r fig.cap="F2-Threshold curve and ROC curve for validation set"}
+grid.arrange(NBev,NBav,ncol=1)
+```
+```{r fig.cap="F2-Threshold curve and ROC curve for test set"}
+grid.arrange(NBet,NBat,ncol=1)
+```
+  
+The blue dots on the graph indicate the threshold chosen and the confusion matricies are as follows:  
+  
+Validation set:  
+```{r }
+pander(h2o.confusionMatrix(NBp,metrics="f2")[,1:3])
+```
+
+Test set:  
+```{r }
+pander(h2o.confusionMatrix(NBt,metrics="f2")[,1:3])
+```
+  
+In the prediction, we failed to identify `r round(h2o.confusionMatrix(NBt,metrics="f2")[2,3]*100,2)`% of the credit default, which we will use it as a benchmark for the following analysis. Note that we are going to have a high class error for the non-default class because we prefer false positive than false negative, the class error here is `r round(h2o.confusionMatrix(NBt,metrics="f2")[1,3]*100,2)`%.  
+  
+### b. Logit Classifier with regularization (LASSO, ridge and Elastic Net)  
+  
+Here I try to apply GLM using logit regression with different regularization, I defined a grid **GLM** in H2O, then run grid search using different alpha. (alpha = 0 when ridge, and alpha = 1 when LASSO)  
+
+```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
+h2o.rm("GLM")
+GLM <- h2o.grid(
+  algorithm = "glm", 
+  grid_id = "GLM",
+  hyper_params = list(alpha = c(0,0.25,0.5,0.75,1)),
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
+  y="y",
+  seed=0706,
+  family = "binomial"
+)
+
+GLMm<-h2o.getGrid(
+  grid_id = "GLM", 
+  sort_by = "F2",
+  decreasing = TRUE
+)
+GLMb<- h2o.getModel(GLMm@model_ids[[1]])
+```
+  
+Again I chose the model with highest F2, which is the model with alpha equals to `r GLMb@parameters$alpha`. I also predict the values for the test set using the best model.    
+```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
+GLMp<-h2o.performance(GLMb,valid=T)
+h2o.auc(GLMp)
+GLMrp<-cbind(h2o.fpr(GLMp),h2o.tpr(GLMp)$tpr)
+colnames(GLMrp)[3]<-"tpr"
+GLMt<-h2o.performance(GLMb,newdata = h2o_sd$test,xval=T)
+GLMrt<-cbind(h2o.fpr(GLMt),h2o.tpr(GLMt)$tpr)
+h2o.auc(GLMt)
+colnames(GLMrt)[3]<-"tpr"
+```
+
 
