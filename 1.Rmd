@@ -163,7 +163,7 @@ ggplot(d[,mean(y),by=(round(exp(round(log(d$LIMIT_BAL),2))))])+geom_smooth(aes(x
   
 Credit limit has a very significant negative correlation with default probability, which makes sense because banks only give high limit to those who always pay duly.  
   
-Since **LIMIT_BAL**, **BILL_AMT** and **PAY_AMT** are skewed, log variables of these variables are also created. For negative values or zeros, flags are also created to distinguish these observations.  
+Since **LIMIT_BAL**, **BILL_AMT** and **PAY_AMT** are skewed, log variables of these variables are also created, although it would not affect tree-based models, it is still useful for GLM. For negative values or zeros, flags are also created to distinguish these observations.  
 ```{r, message=FALSE, warning=FALSE}
 d$LLIMIT_BAL<-log(d$LIMIT_BAL)
 d$LBILL_AMT1<-ifelse(d$BILL_AMT1>0,log(d$BILL_AMT1),0)
@@ -227,7 +227,7 @@ h2o_sd<- h2o.splitFrame(h2o_d, ratios = c(.6, 0.2),seed=0706)
 names(h2o_sd) <- c("train", "valid", "test")
 ```
 
-After splitting, there are `r attributes(h2o_sd$train)$nrow`, `r attributes(h2o_sd$valid)$nrow` and `r attributes(h2o_sd$test)$nrow` observations in the training set, validation set and test set respectively and each with `r ncol(df)` features. In the following analysis, I will start with Naive Bayes as a benchmark, and compare the performance of GLM (Elastic Net regularized logit regression), Random Forest, Gradient Machine Boosting and finally Artificial Neural Network.  
+After splitting, there are `r attributes(h2o_sd$train)$nrow`, `r attributes(h2o_sd$valid)$nrow` and `r attributes(h2o_sd$test)$nrow` observations in the training set, validation set and test set respectively and each with `r ncol(df)` features. In the following analysis, I will start with Naive Bayes as a benchmark, and compare the performance of GLM (Elastic Net regularized logit regression), Random Forest and finally Gradient Machine Boosting.  
   
 ### a. Naive Bayes Classifier  
 Here I used the function *h2o.naiveBayes* to predict the credit default using Naive Bayes Classifier, using **y** as the response variable, all other variables as features. Note that the seed here is not really doing anything but just to standardize the code because I am going to use the same seed in other models.  
@@ -251,16 +251,16 @@ colnames(NBrt)[3]<-"tpr"
   
 I extract the performance metrics from the model and use the model to predict outcomes in the test set. Overall I get an AUC of `r round(h2o.auc(NBp),4)` for the validation set and an AUC of `r round(h2o.auc(NBt),4)` for the test set, which is pretty good given the simplicity of the model.  
   
-I am going to use the F2 metric to decide the threshold in all models since it places more emphasis on False Negative, which is better in this scenario because a bank possibly prefer to incorrectly predict individuals to default than to have unexpected defaults. 
+I am going to use the F2 score to decide the threshold in all models since it places more emphasis on False Negative, which is better in this scenario because a bank possibly prefer to incorrectly predict individuals to default than to have unexpected defaults. 
 
 ```{r  cache=FALSE}
 NBev<-ggplot(h2o.F2(NBp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  xlab("Threshold")+ylab("F2 Score")+xlim(0,1)+
   geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(NBp,"f2"),y=h2o.F2(NBp,h2o.find_threshold_by_max_metric(NBp,"f2"))[[1]]),col="blue")
 NBet<-ggplot(h2o.F2(NBt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  xlab("Threshold")+ylab("F2 Score")+xlim(0,1)+
   geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(NBt,"f2"),y=h2o.F2(NBt,h2o.find_threshold_by_max_metric(NBt,"f2"))[[1]]),col="blue")
 NBav<-ggplot(NBrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
@@ -281,7 +281,7 @@ grid.arrange(NBev,NBav,ncol=1)
 grid.arrange(NBet,NBat,ncol=1)
 ```
   
-The blue dots on the graph indicate the threshold chosen and the confusion matricies are as follows:  
+The blue dots on the graph indicate the threshold chosen and the confusion matrices are as follows:  
   
 **Validation set**:  
 ```{r  cache=FALSE}
@@ -297,7 +297,7 @@ The rows are the actual value and the columns are the prediction values. In the 
   
 ### b. Logit Classifier with regularization (LASSO, ridge and Elastic Net)  
   
-Here I try to apply GLM using logit regression with different regularization, I defined a grid **GLM** in H2O, then run grid search using different alpha. (alpha = 0 when ridge, and alpha = 1 when LASSO)  
+Here I try to apply GLM using logit regression with different regularization, I defined a grid **GLM** in H2O, then run grid search using different alpha and use max lambda search to optimize. (alpha = 0 when ridge, and alpha = 1 when LASSO)  
 
 ```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
 h2o.rm("GLM")
@@ -310,7 +310,8 @@ GLM <- h2o.grid(
   x=colnames(h2o_sd$train)[-24],
   y="y",
   seed=0706,
-  family = "binomial"
+  family = "binomial",
+  lambda_search =T
 )
 
 GLMm<-h2o.getGrid(
@@ -337,11 +338,11 @@ I get an AUC of `r round(h2o.auc(GLMp),4)` for the validation set and an AUC of 
 ```{r, cache=FALSE}
 GLMev<-ggplot(h2o.F2(GLMp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  xlab("Threshold")+ylab("F2 Score")+xlim(0,1)+
   geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(GLMp,"f2"),y=h2o.F2(GLMp,h2o.find_threshold_by_max_metric(GLMp,"f2"))[[1]]),col="blue")
 GLMet<-ggplot(h2o.F2(GLMt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  xlab("Threshold")+ylab("F2 Score")+xlim(0,1)+
   geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(GLMt,"f2"),y=h2o.F2(GLMt,h2o.find_threshold_by_max_metric(GLMt,"f2"))[[1]]),col="blue")
 GLMav<-ggplot(GLMrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
@@ -361,7 +362,7 @@ grid.arrange(GLMev,GLMav,ncol=1)
 grid.arrange(GLMet,GLMat,ncol=1)
 ```
   
-The confusion matricies are as follows:  
+The confusion matrices are as follows:  
 **Validation set**:  
 ```{r cache=FALSE}
 pander(h2o.confusionMatrix(GLMp,metrics="f2")[,1:3])
@@ -384,7 +385,7 @@ ggplot(data.table(cbind(h2o.varimp(GLMb)$names[1:10],h2o.varimp(GLMb)$coefficien
 From the graph above, we can see almost all the most important variables are payment status. The first three variables actually make sense because if you pay duly or just a little late, you are probably going to pay on time next time, but you are more likely to default if you for example are 2 months late. The education 4 is important as well, but since it is in the other category, not much can be interpreted.  
   
 ### c. Random Forest  
-Here I try to apply Random Forest, I defined a grid **RF** in H2O, then run grid search using different max tree depth and variables each tree, then I choose the best model with highest F2 metric.  
+Here I try to apply Random Forest, I defined a grid **RF** in H2O, then run grid search using different max tree depth and variables each tree, then I choose the best model with highest F2 score.  
 ```{r results="hide", message=FALSE, warning=FALSE,cache=FALSE}
 h2o.rm("RF")
 
@@ -424,14 +425,14 @@ colnames(RFrt)[3]<-"tpr"
   
 I get an AUC of `r round(h2o.auc(RFp),4)` for the validation set and an AUC of `r round(h2o.auc(RFt),4)` for the test set, which are both better than the NB predictor, the AUC for validation set is slightly lower than that of GLM but the AUC for test set is higher. The following two graphs are the F2 to threshold curve and the ROC curve, the blue dots again indicate the threshold chosen.  
 
-```{r, cache=FALSE}
+```{r cache=FALSE}
 RFev<-ggplot(h2o.F2(RFp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  xlab("Threshold")+ylab("F2 Score")+xlim(0,1)+
   geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(RFp,"f2"),y=h2o.F2(RFp,h2o.find_threshold_by_max_metric(RFp,"f2"))[[1]]),col="blue")
 RFet<-ggplot(h2o.F2(RFt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
-  xlab("Threshold")+ylab("F2 Metric")+xlim(0,1)+
+  xlab("Threshold")+ylab("F2 Score")+xlim(0,1)+
   geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(RFt,"f2"),y=h2o.F2(RFt,h2o.find_threshold_by_max_metric(RFt,"f2"))[[1]]),col="blue")
 RFav<-ggplot(RFrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
   scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
@@ -465,7 +466,7 @@ pander(h2o.confusionMatrix(RFt,metrics="f2")[,1:3])
 We failed to identify `r round(h2o.confusionMatrix(RFt,metrics="f2")[2,3]*100,2)`% of the credit default in the test set which is higher than the NB estimator, and the class error of not defaulting is `r round(h2o.confusionMatrix(RFt,metrics="f2")[1,3]*100,2)`%, which is lower than the NB estimator.
   
 The following graph shows the relative importance of the variables for random forest. 
-```{r cache=FALSE}
+```{r cache=FALSE, fig.cap="Relative strength of 10 most important variables"}
 ggplot(data.table(cbind(h2o.varimp(RFb)$variable[1:10],h2o.varimp(RFb)$scaled_importance[1:10],h2o.varimp(RFb)$relative_importance[1:10])))+
   geom_col(aes(x=V1,y=as.numeric(V2),fill=as.numeric(V3)))+coord_flip()+scale_x_discrete(limits=rev(h2o.varimp(RFb)$variable[1:10]))+
   scale_y_continuous(breaks=seq(0,1,0.25))+
@@ -474,11 +475,144 @@ ggplot(data.table(cbind(h2o.varimp(RFb)$variable[1:10],h2o.varimp(RFb)$scaled_im
 ```
   
 Payment status are the most important variables but this time age, log credit limit and credit limit are also important to the prediction.  
+  
+### d. Gradient Boosting Machine  
+  
+Here I try to apply GBM, I defined a grid **GBM** in H2O, then run grid search using different max tree depth and learning rate, then I choose the best model with highest F2 score.  
+```{r results="hide", message=FALSE, warning=FALSE,cache=FALSE}
+h2o.rm("GBM")
 
+GBM<-h2o.grid(
+  algorithm = "gbm", 
+  grid_id = "GBM",
+  hyper_params = list(learn_rate=c(0.06,0.07,0.08,0.09,0.1),max_depth=c(4,5,6,7)),
+  training_frame = h2o_sd$train,
+  validation_frame = h2o_sd$valid,
+  x=colnames(h2o_sd$train)[-24],
+  y="y",
+  seed=0706,
+  ntrees=100
+)
+GBMm<-h2o.getGrid(
+  grid_id = "GBM", 
+  sort_by = "F2",
+  decreasing = TRUE
+)
 
+GBMb<- h2o.getModel(GBMm@model_ids[[1]])
+```
+  
+The best model is the model with `r GBMb@parameters$max_depth` as max tree depth for each tree and `r GBMb@parameters$learn_rate` as learning rate.  
+  
+I then extract the performance and do prediction on the test set.  
+```{r message=FALSE, warning=FALSE, results="hide",cache=FALSE}
+GBMp<-h2o.performance(GBMb,valid=T)
+h2o.auc(GBMp)
+GBMrp<-cbind(h2o.fpr(GBMp),h2o.tpr(GBMp)$tpr)
+colnames(GBMrp)[3]<-"tpr"
+GBMt<-h2o.performance(GBMb,newdata = h2o_sd$test)
+GBMrt<-cbind(h2o.fpr(GBMt),h2o.tpr(GBMt)$tpr)
+h2o.auc(GBMt)
+colnames(GBMrt)[3]<-"tpr"
+```
+  
+I get an AUC of `r round(h2o.auc(GBMp),4)` for the validation set and an AUC of `r round(h2o.auc(GBMt),4)` for the test set, which are both better than the NB predictor, but worse than GLM and random forest. The following two graphs are the F2 to threshold curve and the ROC curve, the blue dots again indicate the threshold chosen.  
 
+```{r, cache=FALSE}
+GBMev<-ggplot(h2o.F2(GBMp))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Score")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(GBMp,"f2"),y=h2o.F2(GBMp,h2o.find_threshold_by_max_metric(GBMp,"f2"))[[1]]),col="blue")
+GBMet<-ggplot(h2o.F2(GBMt))+geom_line(aes(x=threshold,y=f2,color=threshold),size=1)+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  xlab("Threshold")+ylab("F2 Score")+xlim(0,1)+
+  geom_point(size=2,aes(x=h2o.find_threshold_by_max_metric(GBMt,"f2"),y=h2o.F2(GBMt,h2o.find_threshold_by_max_metric(GBMt,"f2"))[[1]]),col="blue")
+GBMav<-ggplot(GBMrp,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+ylim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(GBMp,h2o.find_threshold_by_max_metric(GBMp,"f2"))[[1]],y=h2o.tpr(GBMp,h2o.find_threshold_by_max_metric(GBMp,"f2"))[[1]]),col="blue")
+GBMat<-ggplot(GBMrt,aes(x=fpr,y=tpr))+geom_line(aes(col=threshold),size=1)+xlab("False Positive Rate")+ylab("True Positive Rate")+
+  scale_color_gradient2("Threshold",low="red",high="green",mid="yellow",midpoint = 0.5)+
+  geom_segment(x=0,y=0,xend=1,yend=1,size=1,col="#00BFC4")+xlim(0,1)+ylim(0,1)+
+  geom_point(size=2,aes(x=h2o.fpr(GBMt,h2o.find_threshold_by_max_metric(GBMt,"f2"))[[1]],y=h2o.tpr(GBMt,h2o.find_threshold_by_max_metric(GBMt,"f2"))[[1]]),col="blue")
+
+```
+
+```{r fig.cap="F2-Threshold curve and ROC curve for the **validation set**", cache=FALSE}
+grid.arrange(GBMev,GBMav,ncol=1)
+```
+```{r fig.cap="F2-Threshold curve and ROC curve for the **test set**", cache=FALSE}
+grid.arrange(GBMet,GBMat,ncol=1)
+```
+    
+The confusion matrices are as follows:  
+**Validation set**:  
+```{r cache=FALSE}
+pander(h2o.confusionMatrix(GBMp,metrics="f2")[,1:3])
+```
+
+**Test set**:  
+```{r cache=FALSE}
+pander(h2o.confusionMatrix(GBMt,metrics="f2")[,1:3])
+```
+  
+We failed to identify `r round(h2o.confusionMatrix(GBMt,metrics="f2")[2,3]*100,2)`% of the credit default in the test set and the class error of not defaulting is `r round(h2o.confusionMatrix(GBMt,metrics="f2")[1,3]*100,2)`%, which are both lower than the NB estimator.
+  
+The following graph shows the relative importance of the variables for GBM. 
+```{r cache=FALSE, fig.cap="Relative strength of 10 most important variables"}
+ggplot(data.table(cbind(h2o.varimp(GBMb)$variable[1:10],h2o.varimp(GBMb)$scaled_importance[1:10],h2o.varimp(GBMb)$relative_importance[1:10])))+
+  geom_col(aes(x=V1,y=as.numeric(V2),fill=as.numeric(V3)))+coord_flip()+scale_x_discrete(limits=rev(h2o.varimp(GBMb)$variable[1:10]))+
+  scale_y_continuous(breaks=seq(0,1,0.25))+
+  theme(axis.ticks=element_blank())+ylab("Relative Importance")+xlab("Variable")+
+  scale_fill_distiller(palette="Spectral",guide=F)
+```
+  
+Payment status are the most important variables, especially the latest payment status. Besides, age, log credit limit, log payment amount and credit limit are also important to the prediction.  
+  
+### d. Ensemble  
+  
+I decided to try to improve by model a bit by using a ensemble with my three models, I am not going to interpret any results here, but the metrics are going to be discussed in the following part for comparison purpose.  
+What I have done here is I take the predictions from GLM, RF and GBM and put them in a Naive Bayes model, where y is still the response variable and using m1, m2 and m3 as explanatory variables, which are the predictions from the models described above.     
+```{r results="hide", warning=F,message=F,cache=F}
+m1p<-as.vector(h2o.predict(GLMb,newdata = h2o_sd$test)$p1)
+m2p<-as.vector(h2o.predict(RFb,newdata = h2o_sd$test)$p1)
+m3p<-as.vector(h2o.predict(GBMb,newdata = h2o_sd$test)$p1)
+tsset<-data.table(as.data.frame(h2o_sd$test))
+tsset[,m1:=m1p]
+tsset[,m2:=m2p]
+tsset[,m3:=m3p]
+h2o_ts<-as.h2o(tsset)
+h2o_sd2<- h2o.splitFrame(h2o_ts, ratios = c(.6, 0.2),seed=0706)
+names(h2o_sd2) <- c("train", "valid", "test")
+EN<-h2o.naiveBayes(
+  training_frame = h2o_sd2$train,
+  validation_frame = h2o_sd2$valid,
+  x=c("m1","m2","m3"),
+  y="y",
+  seed=0706,
+  nfolds = 10
+)
+ENt<-h2o.performance(EN,newdata = h2o_sd2$test)
+```
+
+## 4. Results and Conclusion  
+  
+After running all models, I summarize AUC, F2 Score and Classification error for test set for all results in the following table.  
+  
+| Metrics | NB | GLM | RF | GBM | EN | 
+|---|:----:|:----:|:----:|:----:|:----:|
+|AUC|`r round(as.numeric(h2o.auc(NBt)),4)`|`r round(as.numeric(h2o.auc(GLMt)),4)`|`r round(as.numeric(h2o.auc(RFt)),4)`|`r round(as.numeric(h2o.auc(GBMt)),4)`|`r round(as.numeric(h2o.auc(ENt)),4)`| 
+|F2|`r round(as.numeric(h2o.F2(NBt,thresholds = h2o.find_threshold_by_max_metric(NBt,metric="f2"))),4)`|`r round(as.numeric(h2o.F2(GLMt,thresholds = h2o.find_threshold_by_max_metric(GLMt,metric="f2"))),4)`|`r round(as.numeric(h2o.F2(RFt,thresholds = h2o.find_threshold_by_max_metric(RFt,metric="f2"))),4)`|`r round(as.numeric(h2o.F2(GBMt,thresholds = h2o.find_threshold_by_max_metric(GBMt,metric="f2"))),4)`|`r round(as.numeric(h2o.F2(ENt,thresholds = h2o.find_threshold_by_max_metric(ENt,metric="f2"))),4)`| 
+|Error (FN/P)|`r round(as.numeric(h2o.confusionMatrix(NBt,metrics="f2")[2,3]),4)`|`r round(as.numeric(h2o.confusionMatrix(GLMt,metrics="f2")[2,3]),4)`|`r round(as.numeric(h2o.confusionMatrix(RFt,metrics="f2")[2,3]),4)`|`r round(as.numeric(h2o.confusionMatrix(GBMt,metrics="f2")[2,3]),4)`|`r round(as.numeric(h2o.confusionMatrix(ENt,metrics="f2")[2,3]),4)`| 
+|Error (FP/N)|`r round(as.numeric(h2o.confusionMatrix(NBt,metrics="f2")[1,3]),4)`|`r round(as.numeric(h2o.confusionMatrix(GLMt,metrics="f2")[1,3]),4)`|`r round(as.numeric(h2o.confusionMatrix(RFt,metrics="f2")[1,3]),4)`|`r round(as.numeric(h2o.confusionMatrix(GBMt,metrics="f2")[1,3]),4)`|`r round(as.numeric(h2o.confusionMatrix(ENt,metrics="f2")[1,3]),4)`|  
+  
+Overall I think this machine learning task does not have a very high AUC rate but still successful. All GLM, RF, GBM and their ensemble have a higher AUC than the NB classifier, which is a good sign that my effort actually pays out. Surprisingly, GBM has a lower AUC than GLM and RF even though it should be a more complicated model. I actually planned to apply Artificial Neural Network but it is taking too long to run and its AUC is actually even lower, so it is not really worth it.  
+GLM and RF have very similar AUC and F2 even though they are very different models, although their classification errors differ a lot because of using different threshold.
+On the other hand, the ensemble of the GLM, RF and GBM model actually has the highest AUC in the test set and also the highest F2 score. It has fair classification errors in both directions compared to other models, so I think the model EN is the best model here.  
+One improvement I could make is that I would actually want to use Cross Validation in other models like in EN as it can give us more stable result. All models are giving very similar performance so a more stable result can help us do better decision.  
+Another improvement is that I should use more values in grid search to fine tune the parameters, but it is going to take a long time so I will try that later.  
 
 ```{r results="hide"}
-#h2o.shutdown(prompt=F)
+h2o.shutdown(prompt=F)
 ```
 

@@ -129,11 +129,11 @@ df<-d
 set.seed(0706)
 df[,y:=as.factor(y)]
 h2o_d<-as.h2o(df)
-h2o_sd<- h2o.splitFrame(h2o_d, ratios = c(.6, 0.2) )
+h2o_sd<- h2o.splitFrame(h2o_d, ratios = c(.6, 0.2),seed=0706)
 names(h2o_sd) <- c('train', 'valid', 'test')
 
 # pairs(dr[,.(PAY_AMT1,PAY_AMT2,PAY_AMT3)])
-
+# install.packages("prettydoc")
 #NB
 NB<-h2o.naiveBayes(
   training_frame = h2o_sd$train,
@@ -187,7 +187,7 @@ h2o.rm("GLM")
 GLM <- h2o.grid(
   algorithm = "glm", 
   grid_id = "GLM",
-  hyper_params = list(alpha = c(0,0.5,1)),
+  hyper_params = list(alpha = c(0,0.25,0.5,0.75,1)),
   training_frame = h2o_sd$train,
   validation_frame = h2o_sd$valid,
   x=colnames(h2o_sd$train)[-24],
@@ -201,7 +201,7 @@ GLMm<-h2o.getGrid(
   sort_by = "F2",
   decreasing = TRUE
 )
-
+GLMm
 GLMb<- h2o.getModel(GLMm@model_ids[[1]])
 GLMb@parameters$alpha
 
